@@ -1,16 +1,21 @@
 package main
 
 import (
-	"bytes"
-	"encoding/gob"
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/gofiber/fiber/v3"
+)
+
+var (
+	SPACE           string = " "
+	WAL_LINE_LENGTH int    = 4
 )
 
 type DB struct {
@@ -20,46 +25,49 @@ type DB struct {
 }
 
 func (d *DB) Init() {
-	dat, err := os.ReadFile("wal")
-
+	file, err := os.Open("wal")
 	if err != nil {
-		log.Fatalf("Error reading WAL file %s\n", err.Error())
+		log.Fatalf("Error reading WAL")
+	}
+	defer file.Close() // Ensure the file is closed
+
+	// Create a new scanner
+	scanner := bufio.NewScanner(file)
+
+	// Iterate through the file line by line
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		keyAndValue := strings.Split(line, " ")
+		if len(keyAndValue) != WAL_LINE_LENGTH {
+			log.Fatalf("Error reading WAL")
+		}
+
+		var v any = keyAndValue[1]
+
+		switch keyAndValue[1] {
+		case "1":
+			// string
+			break
+		case "2":
+			v, _ = strconv.ParseInt(keyAndValue[3], 10, 64)
+			// int
+			break
+		case "3":
+			v, _ = strconv.ParseFloat(keyAndValue[3], 64)
+			// float
+			break
+		case "4":
+			break
+		}
+
+		d.kv[keyAndValue[2]] = v
 	}
 
-	fmt.Println("size = ", dat)
-
-	keySize := dat[1]
-	key := string(dat[2 : 3+keySize])
-
-	valSize := dat[3+keySize+1]
-
-	typ := int(dat[len(dat)-1])
-
-	var val any
-	switch typ {
-	case 0:
-		val = string(dat[3+keySize+1 : 3+keySize+1+valSize])
-		break
-	case 1:
-		val, _ = strconv.Atoi(string(dat[3+keySize+1 : 3+keySize+1+valSize]))
-		break
-	case 2:
-		val, _ = strconv.ParseFloat(string(dat[3+keySize+1:3+keySize+1+valSize]), 64)
-		break
-	case 3:
-		break
+	// Check for errors during scanning
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("Error during scanning: %v", err)
 	}
-
-	// switch v := val.(type) {
-
-	// }
-	fmt.Println(key)
-	fmt.Println(val)
-	// keySize := binary.BigEndian.Uint64()
-	// fmt.Println("size = ", keySize)
-	// keySize := int(dat[1:8])
-
-	// fmt.Println("key = ",
 }
 
 type PutReq struct {
@@ -100,45 +108,36 @@ func main() {
 		var r PutReq
 		json.Unmarshal(c.Body(), &r)
 
-		var data []byte
+		var data string
 
-		data = append(data, byte(1))
+		data += "1"
+		data += SPACE
 
-		data = append(data, byte(len(r.Key)))
-		data = append(data, r.Key...)
-
-		var buf bytes.Buffer
-		enc := gob.NewEncoder(&buf)
-		err := enc.Encode(r.Value)
-		if err != nil {
-			log.Fatalf("Error encoding value to []byte %s\n", err.Error())
-		}
-
-		data = append(data, byte(len(buf.Bytes())))
-		data = append(data, buf.Bytes()...)
-
-		fmt.Printf("type = %T\n", r.Value)
-
+		// type of the value
 		switch r.Value.(type) {
 		case string:
-			data = append(data, 0)
+			data += "1"
+			break
 		case int, int32, int64:
-			data = append(data, 1)
+			data += "2"
+			break
 		case float32, float64:
-			data = append(data, 2)
+			data += "3"
+			break
 		default:
-			data = append(data, 3)
+			data += "4"
+			break
 		}
-		// Write to WAL
-		// 1 <KeySize><Key><ValueSize><Value>
+		data += SPACE
 
-		// 0 -> str
-		// 1 -> int
+		data += r.Key
+		data += SPACE
 
-		// How to create a file and write bytes to it
-		// How to convert string to bytes
+		data += fmt.Sprintf("%v", r.Value)
 
-		_, err = f.Write(data)
+		data += "\n"
+
+		f.WriteString(data)
 		if err != nil {
 			log.Fatalf("Error writing to WAL %s\n", err.Error())
 		}
