@@ -7,7 +7,10 @@ import (
 )
 
 func main() {
-	db := NewDB("wal")
+	db, err := NewDB("wal")
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 
 	app := fiber.New()
 

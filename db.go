@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -31,10 +30,10 @@ type DB struct {
 	walFilePointer *os.File
 }
 
-func NewDB(walFilePath string) *DB {
-	f, err := os.OpenFile(walFilePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+func NewDB(walFilePath string) (*DB, error) {
+	f, err := os.OpenFile(walFilePath, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
-		log.Fatalf("Error reading WAL %s\n", err.Error())
+		return nil, E(err, "Error reading WAL")
 	}
 
 	db := &DB{
@@ -45,7 +44,7 @@ func NewDB(walFilePath string) *DB {
 	}
 	db.Init()
 
-	return db
+	return db, nil
 }
 
 type PutReq struct {
@@ -53,15 +52,15 @@ type PutReq struct {
 	Value any    `json:"value"`
 }
 
-func (d *DB) Init() {
+func (d *DB) Init() error {
 	file, err := os.Open(d.walFilePointer.Name())
 	if err != nil {
-		log.Fatalf("Error reading WAL")
+		return E(err, "Error reading WAL file pointer")
 	}
 	defer file.Close() // Ensure the file is closed
 
 	// Create a new scanner
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(file) // TODO: reuse d.walFilePointer
 
 	// Iterate through the file line by line
 	for scanner.Scan() {
@@ -69,7 +68,7 @@ func (d *DB) Init() {
 
 		keyAndValue := strings.Split(line, " ")
 		if len(keyAndValue) != WAL_LINE_LENGTH {
-			log.Fatalf("Error reading WAL")
+			return E(err, "Error reading WAL")
 		}
 
 		var v any = keyAndValue[1]
@@ -87,14 +86,14 @@ func (d *DB) Init() {
 			break
 		}
 
-		// d.kv[keyAndValue[2]] = v
 		d.PutWithoutWAL(keyAndValue[2], v)
 	}
 
 	// Check for errors during scanning
 	if err := scanner.Err(); err != nil {
-		log.Fatalf("Error during scanning: %v", err)
+		return E(err, "Error scanning WAL file")
 	}
+	return nil
 }
 
 func (d *DB) Close() error {
@@ -184,7 +183,6 @@ func (db *DB) Put(key, value any) error {
 
 	_, err := db.walFilePointer.WriteString(data)
 	if err != nil {
-		// log.Fatalf("Error writing to WAL %s\n", err.Error())
 		return errors.New(fmt.Sprintf("Error writing to WAL %s\n", err.Error()))
 	}
 
